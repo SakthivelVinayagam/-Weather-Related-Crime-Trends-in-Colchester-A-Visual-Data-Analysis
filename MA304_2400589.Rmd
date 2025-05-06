@@ -1,0 +1,1051 @@
+---
+title: 'MA304 : An Exploratory Data Visualisation Study of Weather-Related Crime Trends in Colchester (2024)'
+output:
+  html_document: default
+  pdf_document:
+    latex_engine: xelatex
+author: "Presented by : 2400589_Sakthivel Vinayagam"
+---
+
+## Introduction
+
+Understanding **crime dynamics** is essential for effective **public safety strategies**. In recent years, researchers have increasingly explored how external factors, such as _weather conditions_, may influence criminal activity. This report examines the role of _climatic variables_ on **crime rates** in **Colchester, Essex**, during the year **2024**.
+
+### Overview of the Datasets
+
+This investigation uses two datasets: **crime24.csv**, which includes monthly _street-level crime incidents_ in **Colchester** (e.g., crime type, location, outcome), and **temp24.csv**, which provides daily _weather data_ such as **temperature**, **humidity**, **pressure**, and **precipitation** from a nearby station.
+
+### Aim and Objectives
+
+The analysis begins by independently exploring both **crime** and **climate** datasets to identify _seasonal_, _temporal_, and _geographic patterns_. These datasets are then merged to examine how fluctuations in **temperature**, **humidity**, or **pressure** align with changes in _crime volume_ or _type_. A variety of **visualisation techniques**, including _time series_, _scatter plots_, and _spatial mapping_, are applied to highlight key patterns and associations. The ultimate goal is to derive practical, **actionable recommendations** for local law enforcement based on _data-informed insights_.
+
+### Research Question
+
+> **Are crime levels influenced by weather in Colchester?**
+
+To answer this, we’ll perform:
+- Exploratory data analysis and visualisation of both datasets
+- Time series analysis and smoothing
+- Mapping and spatial insight using Leaflet
+- Correlation and clustering techniques to explore links between climate and crime
+
+Through this investigation, we aim to uncover trends that may assist in **strategic policing, crime prevention**, and **public awareness** campaigns tailored to seasonal or climatic patterns.
+
+------------------------------------------------------------------------
+
+## Data Preparation
+
+```{r}
+
+### Load required packages
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(forcats)
+library(leaflet)
+library(plotly)
+library(tidyr)
+library(reshape2)
+library(patchwork)
+library(viridis)
+library(gganimate)
+
+```
+
+### Load the datasets
+
+```{r}
+# Load the crime dataset from CSV file
+crime24 <- read_csv("crime24.csv", show_col_types = FALSE)
+
+# Display the first few rows of the dataset
+as.data.frame(head(crime24))
+```
+
+```{r}
+# Load the temperature dataset from CSV files
+temp24 <- read_csv("temp24.csv", show_col_types = FALSE)
+
+# Display the first few rows of the dataset
+as.data.frame(head(temp24))
+```
+
+### Convert date format and extract useful time features
+
+```{r}
+# Fix incomplete date format by adding a day to form valid dates (e.g., "2024-01" -> "01-2024-01")
+crime24$date <- paste0("01-", crime24$date)  
+crime24$date <- as.Date(crime24$date, format = "%d-%Y-%m")
+
+# Extract full month name from the date
+crime24$month <- month(crime24$date, label = TRUE, abbr = FALSE)
+
+# Assign a season based on the month number
+crime24$season <- case_when(
+  month(crime24$date) %in% c(12, 1, 2) ~ "Winter",   # December–February
+  month(crime24$date) %in% c(3, 4, 5) ~ "Spring",    # March–May
+  month(crime24$date) %in% c(6, 7, 8) ~ "Summer",    # June–August
+  month(crime24$date) %in% c(9, 10, 11) ~ "Autumn"   # September–November
+)
+
+# Remove unused columns with no analytical value
+crime24 <- crime24 %>% select(-c(context, location_subtype))
+
+# Replace missing values in outcome_status with "Unknown"
+crime24$outcome_status <- ifelse(is.na(crime24$outcome_status), "Unknown", crime24$outcome_status)
+
+# Display a count of missing values by column
+colSums(is.na(crime24))
+```
+
+### Clean and prepare temperature dataset
+
+```{r}
+# Convert the 'Date' column to proper Date format
+temp24$Date <- as.Date(temp24$Date)
+
+# Extract the full month name from the date
+temp24$month <- month(temp24$Date, label = TRUE, abbr = FALSE)
+
+# Assign a season based on the month number
+temp24$season <- case_when(
+  month(temp24$Date) %in% c(12, 1, 2) ~ "Winter",   # December–February
+  month(temp24$Date) %in% c(3, 4, 5) ~ "Spring",    # March–May
+  month(temp24$Date) %in% c(6, 7, 8) ~ "Summer",    # June–August
+  month(temp24$Date) %in% c(9, 10, 11) ~ "Autumn"   # September–November
+)
+
+# Remove unnecessary columns with excessive missing values
+temp24 <- temp24 %>% select(-c(PreselevHp, SnowDepcm))
+
+# Replace missing values in rainfall and low cloud cover columns with 0
+temp24$Precmm[is.na(temp24$Precmm)] <- 0
+temp24$lowClOct[is.na(temp24$lowClOct)] <- 0
+
+# Display a count of remaining missing values by column
+colSums(is.na(temp24))
+```
+
+## Exploratory Data Analysis (EDA)
+
+### Crime Category Distribution
+
+```{r}
+# Create a bar plot showing the distribution of crime categories, ordered by frequency
+crime_category_plot <- ggplot(crime24, aes(x = fct_infreq(category), fill = category)) +
+  geom_bar(color = "black") +  # Add black borders to bars
+  labs(title = "Distribution of Crime Categories",
+       x = "Crime Category", y = "Frequency") +
+  theme_minimal() +  # Apply a clean, minimal theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# Convert the static ggplot to an interactive plotly version
+ggplotly(crime_category_plot)
+```
+
+The interactive bar plot shows that **violent crime** is the most frequently reported offence in **Colchester**, followed by _anti-social behaviour_. Other crimes like _shoplifting_ and _criminal damage_ occur moderately, while **robbery** and **possession of weapons** are less common. Overall, _violence_ and _anti-social behaviour_ dominate the crime profile in **2024**.
+
+### Outcome Status of Crimes
+
+```{r}
+# Create a bar plot showing the distribution of crime outcome statuses, ordered by frequency
+outcome_plot <- ggplot(crime24, aes(x = fct_infreq(outcome_status), fill = outcome_status)) +
+  geom_bar(color = "black") +  # Add black outline around bars
+  labs(title = "Outcome Status of Reported Crimes",
+       x = "Outcome Status", y = "Count") +
+  theme_minimal() +  # Use a clean minimal theme
+  theme(
+    axis.text.x = element_text(angle = 70, hjust = 1),  # Tilt x-axis labels for better readability
+    axis.title = element_text(size = 12),               # Set font size for axis titles
+    plot.title = element_text(size = 16, face = "bold") # Make plot title larger and bold
+  ) +
+  scale_fill_manual(values = rainbow(length(unique(crime24$outcome_status)))) +  # Use a distinct color for each outcome
+  guides(fill = guide_legend(title = "Outcome Status"))  # Add a legend title
+
+# Convert the static plot to an interactive plotly version
+ggplotly(outcome_plot)
+```
+
+The bar plot reveals that most reported crimes result in **no suspect being identified**, followed by cases where suspects _cannot be prosecuted_. A notable portion of cases remains _under investigation_ or _await court outcomes_, while fewer end in _formal charges_ or other resolutions. This suggests that many crimes in **Colchester** do not lead to prosecution, highlighting challenges in _investigation_ and _legal follow-through_.
+
+### Crime by Location Type
+
+```{r}
+# Create a bar chart showing the number of crimes by location type
+location_plot <- ggplot(crime24, aes(x = location_type, fill = location_type)) +
+  geom_bar(color = "black") +  # Add black borders to each bar
+  labs(title = "Crimes by Location Type",
+       x = "Location Type", y = "Number of Crimes") +
+  theme_minimal()  # Apply a clean, minimal visual theme
+
+# Convert the ggplot chart into an interactive Plotly version
+ggplotly(location_plot)
+```
+
+The bar chart highlights that nearly all crimes are reported under the local police authority (**“Force”**), with very few linked to the **British Transport Police** (_“BTP”_). This suggests that most criminal incidents occur in _community settings_ rather than _transport environments_, emphasizing the primary role of **local policing** in managing crime.
+
+### Top 10 Crime Hotspot Streets
+
+```{r}
+# Identify the top 10 streets with the highest number of crimes
+top_streets <- crime24 %>%
+  group_by(street_name) %>%
+  summarise(crime_count = n()) %>%
+  arrange(desc(crime_count)) %>%
+  slice_head(n = 10)
+
+# Filter the original crime dataset to include only those top 10 streets
+crime_top <- crime24 %>% filter(street_name %in% top_streets$street_name)
+
+# Create a stacked bar plot showing crime type distribution across the top 10 streets
+hotspot_plot <- ggplot(crime_top, aes(x = street_name, fill = category)) +
+  geom_bar() +  # Plot counts by street and crime category
+  labs(title = "Crime Type Distribution in Top 10 Streets",
+       x = "Street", y = "Number of Crimes") +
+  scale_fill_viridis_d(option = "plasma") +  # Apply a visually appealing color palette
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Tilt x-axis labels for readability
+
+# Make the chart interactive with Plotly
+ggplotly(hotspot_plot)
+```
+
+The bar plot shows that **“On or near Supermarket”** and **“On or near Shopping Area”** are the top crime hotspots, largely driven by _shoplifting_. In contrast, locations like _nightclubs_ and _police stations_ show a more diverse mix of crimes, including _violent offences_ and _public disorder_. This suggests that **crime patterns vary by location**, with _retail areas_ experiencing targeted offences and other zones showing broader criminal activity.
+
+### Spatial Mapping of Crime (Leaflet Map)
+
+```{r}
+# Create an interactive leaflet map to display crime locations across Colchester
+leaflet(crime24) %>%
+  addTiles() %>%  # Add default OpenStreetMap tile layer as the base map
+  addCircleMarkers(
+    lng = ~long, lat = ~lat,       # Use longitude and latitude for marker placement
+    radius = 3,                    # Set marker size
+    color = "blue",                # Use blue for marker color
+    stroke = FALSE,                # Remove border around circles
+    fillOpacity = 0.6              # Set transparency for better visibility
+  ) %>%
+  setView(                         # Center the map view on the average location of all crimes
+    lng = mean(crime24$long, na.rm = TRUE),
+    lat = mean(crime24$lat, na.rm = TRUE),
+    zoom = 13                      # Set zoom level for city-scale view
+  )
+```
+
+The interactive **leaflet map** reveals that _central Colchester_, particularly around **major roads** and _commercial zones_, is the main crime hotspot. Areas like **Cymbeline Way** and the _town centre_ show the highest concentration of incidents, while _outer residential areas_ see far fewer. This indicates that crime is closely tied to _high-traffic_, _public-facing spaces_.
+
+### Monthly Crime Trend Over Time
+
+```{r}
+# Ensure the 'date' column is in proper Date format
+crime24$date <- as.Date(crime24$date)
+
+# Create a new variable representing month and year (e.g., "2024-03")
+crime24$month_year <- format(crime24$date, "%Y-%m")
+
+# Group the dataset by month and count the number of crimes in each
+monthly_crimes <- crime24 %>%
+  group_by(month_year) %>%
+  summarise(total_crimes = n()) %>%
+  mutate(month_year = as.Date(paste0(month_year, "-01")))  # Convert to Date for plotting
+
+# Generate a line plot showing monthly crime trends, with a loess smoothing line
+monthly_trend_plot <- ggplot(monthly_crimes, aes(x = month_year, y = total_crimes)) +
+  geom_line(color = "steelblue", size = 1) +  # Line for monthly crime totals
+  geom_smooth(method = "loess", se = FALSE, color = "darkred", linetype = "dashed") +  # Smoothed trend line
+  labs(title = "Monthly Crime Trend in Colchester (2024)",
+       x = "Month", y = "Number of Crimes") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+# Convert to an interactive Plotly plot
+ggplotly(monthly_trend_plot)
+```
+
+The **line chart** shows that crime in **Colchester** peaked mid-year, with the highest levels in **July**, and declined toward the end of **2024**. Early months like _January_ and _February_ also saw elevated activity, while _April_ marked a low point. The overall trend suggests a _seasonal pattern_, with increased crime during **warmer months**, possibly due to higher _public activity_.
+
+### Crime Count Across Seasons
+
+```{r}
+# Group crime data by season and count total crimes in each
+seasonal_crimes <- crime24 %>%
+  group_by(season) %>%
+  summarise(total_crimes = n()) %>%
+  arrange(desc(total_crimes))  # Order seasons by crime count (descending)
+
+# Create a bar plot showing the number of crimes in each season
+season_plot <- ggplot(seasonal_crimes, aes(x = season, y = total_crimes, fill = season)) +
+  geom_bar(stat = "identity", color = "black") +  # Use black borders on bars
+  scale_fill_manual(values = c("Winter" = "#4682B4", "Spring" = "#90EE90",
+                               "Summer" = "#FFD700", "Autumn" = "#FF8C00")) +  # Assign custom colors
+  labs(title = "Crime Count Across Seasons (2024)",
+       x = "Season", y = "Number of Crimes") +
+  theme_minimal()  # Apply a clean visual style
+
+# Convert to an interactive plot using Plotly
+ggplotly(season_plot)
+
+```
+
+The **bar chart** shows that **Summer** had the highest crime levels in **Colchester** during **2024**, followed by **Autumn**, while _Spring_ recorded the fewest crimes. This suggests that crime slightly increases during _warmer months_, likely due to greater _public activity_, and decreases in _colder seasons_. Overall, there is a modest _seasonal pattern_ in crime rates.
+
+### Heatmap of Crime Categories Across Seasons
+
+```{r}
+# Count the number of crimes grouped by both season and category
+crime_season_heatmap <- crime24 %>%
+  group_by(season, category) %>%
+  summarise(crime_count = n(), .groups = 'drop')  # Drop grouping after summarising
+
+# Create a heatmap to show the distribution of crime types across seasons
+heatmap_plot <- ggplot(crime_season_heatmap, aes(x = season, y = category, fill = crime_count)) +
+  geom_tile(color = "white") +  # Draw rectangles with white borders
+  scale_fill_gradient(low = "#ffffcc", high = "#006837", name = "Crime Count") +  # Color gradient
+  labs(title = "Crime Types by Season in Colchester (2024)",
+       x = "Season", y = "Crime Category") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),         # Rotate x-axis labels
+    plot.title = element_text(size = 16, face = "bold"),       # Style the title
+    legend.position = "right"                                  # Position the legend
+  )
+
+# Convert the heatmap to an interactive version
+ggplotly(heatmap_plot)
+```
+
+The **heatmap** shows that **violent crime** is consistently the most reported offence across all seasons in **Colchester**, with slight peaks in _summer_ and _winter_. Other common crimes like _anti-social behaviour_ and _shoplifting_ occur steadily year-round, while less frequent crimes show little seasonal change. Overall, _crime patterns_ remain fairly stable throughout the year, with only modest _seasonal variation_.
+
+## Weather Data Trends
+
+### Time Series of Avg, Max & Min Temperature
+
+```{r}
+# Reshape temperature data into a tidy (long) format for plotting
+temp_long <- temp24 %>%
+  select(Date, TemperatureCAvg, TemperatureCMax, TemperatureCMin) %>%
+  pivot_longer(
+    cols = c(TemperatureCAvg, TemperatureCMax, TemperatureCMin),  # Select columns to reshape
+    names_to = "Metric",      # New column for metric names (Avg, Max, Min)
+    values_to = "Temperature" # New column for temperature values
+  )
+
+# Create a time series line plot of average, max, and min daily temperatures
+temp_trend_plot <- ggplot(temp_long, aes(x = Date, y = Temperature, color = Metric)) +
+  geom_line(size = 0.7) +  # Use thin lines for clarity
+  labs(title = "Temperature Trends in Colchester (2024)",
+       x = "Date", y = "Temperature (°C)", color = "Type") +
+  scale_color_manual(values = c(  # Assign specific colors for each metric
+    "TemperatureCAvg" = "blue",
+    "TemperatureCMax" = "red",
+    "TemperatureCMin" = "green"
+  )) +
+  theme_minimal()  # Apply a clean visual theme
+
+# Convert the plot to an interactive version with Plotly
+ggplotly(temp_trend_plot)
+```
+
+The **line chart** shows a clear _seasonal temperature cycle_ in **Colchester** during **2024**. Temperatures rise from _winter_ to _summer_, peaking in **July** and **August**, then gradually decline toward the year’s end. **Maximum**, _average_, and **minimum temperatures** follow consistent patterns, reflecting typical _UK climate trends_. This seasonal variation provides useful context for understanding how _weather may influence crime activity_.
+
+### Temperature Distribution
+
+```{r}
+# Create a violin plot to show the distribution of average daily temperatures
+temp_violin_plot <- ggplot(temp24, aes(y = TemperatureCAvg, x = "", fill = "")) +
+  geom_violin(fill = "#87CEFA", color = "black") +  # Sky blue fill with black outline
+  labs(
+    title = "Distribution of Average Daily Temperature",
+    y = "Average Temperature (°C)",
+    x = ""
+  ) +
+  theme_minimal()  # Apply a clean, minimal visual theme
+
+# Convert the static violin plot to an interactive version using Plotly
+ggplotly(temp_violin_plot)
+```
+
+The **violin plot** shows that most _average daily temperatures_ in **Colchester** during **2024** fell between **7°C and 18°C**, with the highest concentration around **12–14°C**. _Extreme temperatures_ were rare, with few days below **5°C** or above **20°C**. Overall, this indicates a _mild and stable climate_ throughout the year.
+
+### Monthly Temperature Summary
+
+```{r}
+# Calculate monthly average, maximum, and minimum temperatures
+monthly_temp <- temp24 %>%
+  mutate(month = month(Date, label = TRUE, abbr = FALSE)) %>%
+  group_by(month) %>%
+  summarise(
+    AvgTemp = mean(TemperatureCAvg, na.rm = TRUE),
+    MaxTemp = mean(TemperatureCMax, na.rm = TRUE),
+    MinTemp = mean(TemperatureCMin, na.rm = TRUE)
+  )
+
+# Create a bar chart to show monthly average temperatures with error bars for range
+monthly_temp_summary_plot <- ggplot(monthly_temp, aes(x = month)) +
+  geom_bar(aes(y = AvgTemp), stat = "identity", fill = "#FFA07A") +  # Bar for average temperature
+  geom_errorbar(aes(ymin = MinTemp, ymax = MaxTemp), width = 0.2) +  # Error bar for temperature range
+  labs(
+    title = "Monthly Average Temperature Range",
+    x = "Month", y = "Temperature (°C)"
+  ) +
+  theme_minimal()  # Use a clean, minimal theme
+
+# Convert the static plot to an interactive Plotly version
+ggplotly(monthly_temp_summary_plot)
+```
+
+The **bar chart with error bars** shows a clear _seasonal temperature pattern_ in **Colchester** during **2024**. Temperatures rise from **January**, peak in **July** and **August**, then decline into _winter_. **Summer months** show both _higher averages_ and _wider temperature ranges_, while **winter months** are cooler and more stable. Overall, the plot highlights _typical seasonal shifts_ and _daily variability_ in temperature.
+
+### Seasonal Summary
+
+```{r}
+# Create a boxplot to compare average daily temperatures across seasons
+seasonal_temp_boxplot <- ggplot(temp24, aes(x = season, y = TemperatureCAvg, fill = season)) +
+  geom_boxplot() +  # Display median, quartiles, and outliers
+  scale_fill_manual(values = c(
+    "Winter" = "#4682B4",   # Steel blue
+    "Spring" = "#90EE90",   # Light green
+    "Summer" = "#FFD700",   # Gold
+    "Autumn" = "#FF8C00"    # Dark orange
+  )) +
+  labs(
+    title = "Average Temperature by Season",
+    x = "Season", y = "Average Temperature (°C)"
+  ) +
+  theme_minimal()  # Apply a clean, minimal style
+
+# Convert the static boxplot to an interactive Plotly version
+ggplotly(seasonal_temp_boxplot)
+```
+
+The **boxplot** highlights a clear _seasonal shift in temperatures_ in **Colchester** during **2024**. **Summer** is the warmest season, with a median above **17°C**, while **winter** is the coldest, with values near **7°C** and some days _below freezing_. _Spring_ and _autumn_ fall in between, with similar medians around **11–12°C**. These patterns align with the expected _seasonal temperature cycle_.
+
+### Precipitation Density Plot
+
+```{r}
+# Create a density plot to show the distribution of daily precipitation values
+precip_density_plot <- ggplot(temp24, aes(x = Precmm)) +
+  geom_density(fill = "#6495ED", alpha = 0.7, color = "black") +  # Fill with cornflower blue and black border
+  labs(
+    title = "Density of Daily Precipitation",
+    x = "Precipitation (mm)", y = "Density"
+  ) +
+  theme_minimal()  # Apply a clean minimal theme
+
+# Convert the density plot to an interactive version using Plotly
+ggplotly(precip_density_plot)
+```
+
+
+The **density plot** shows that most days in **Colchester** during **2024** were _dry_ or had _very light rain_, with a strong peak near **0 mm** of precipitation. **Heavier rainfall** (over **10 mm**) was rare, and _extreme rain events_ above **20 mm** were even less frequent. Overall, the year was marked by _mild_ and _mostly dry weather conditions_.
+
+### Humidity & Pressure Time Series Plot
+
+```{r}
+# Reshape the data into long format for humidity and pressure
+humidity_pressure <- temp24 %>%
+  select(Date, HrAvg, PresslevHp) %>%
+  pivot_longer(
+    cols = c(HrAvg, PresslevHp),     # Columns to reshape
+    names_to = "Variable",           # New column for variable names
+    values_to = "Value"              # New column for values
+  )
+
+# Create a time series line plot of humidity and pressure over the year
+humidity_pressure_ts_plot <- ggplot(humidity_pressure, aes(x = Date, y = Value, color = Variable)) +
+  geom_line() +  # Add lines for each variable
+  labs(
+    title = "Humidity and Pressure Over Time",
+    x = "Date", y = "Value", color = "Metric"
+  ) +
+  theme_minimal()  # Apply a minimal visual theme
+
+# Convert the static plot to an interactive Plotly version
+ggplotly(humidity_pressure_ts_plot)
+```
+
+The **line chart** shows that _humidity_ in **Colchester** remained fairly steady throughout **2024**, mostly between **80–90%**, with only slight fluctuations. **Atmospheric pressure** varied a bit more, ranging from **1000 to 1025 hPa**, with some shifts in _late winter_ and _spring_. Overall, both variables were _stable_, indicating _consistent atmospheric conditions_ during the year.
+
+### Wet vs Dry Days
+
+```{r}
+# Classify each day as "Wet" if precipitation ≥ 1 mm, otherwise "Dry"
+temp24$rain_type <- ifelse(temp24$Precmm >= 1, "Wet", "Dry")
+
+# Create a bar plot comparing the number of wet and dry days
+wet_dry_days_plot <- ggplot(temp24, aes(x = rain_type, fill = rain_type)) +
+  geom_bar(color = "black") +  # Add black borders to bars
+  scale_fill_manual(values = c("Dry" = "#FFD700", "Wet" = "#00BFFF")) +  # Gold for dry, blue for wet
+  labs(
+    title = "Count of Wet vs Dry Days in 2024",
+    x = "Day Type", y = "Number of Days"
+  ) +
+  theme_minimal()  # Apply a clean minimal theme
+
+# Convert the static plot to an interactive version using Plotly
+ggplotly(wet_dry_days_plot)
+```
+
+The **bar chart** shows that **dry days** far outnumbered **wet days** in **Colchester** during **2024**, with more than _twice as many dry days_ recorded. This supports the earlier findings that the year was _mostly dry_, with rainfall occurring only _occasionally_, confirming a _mild_ and _dry climate pattern_ overall.
+
+### Visibility Distribution
+
+```{r}
+# Create a density plot showing the distribution of daily visibility in kilometers
+visibility_density_plot <- ggplot(temp24, aes(x = VisKm)) +
+  geom_density(fill = "#6A5ACD", alpha = 0.7, color = "black") +  # Purple fill with black outline
+  labs(
+    title = "Density of Visibility (km)",
+    x = "Visibility (km)", y = "Density"
+  ) +
+  theme_minimal()  # Apply a clean minimal theme
+
+# Convert the static density plot to an interactive Plotly chart
+ggplotly(visibility_density_plot)
+```
+
+The **visibility distribution** shows that in **2024**, most days in **Colchester** had _good visibility_, typically between **30–40 km**. _Low-visibility days_ were rare, indicating that _foggy_ or _hazy conditions_ were uncommon. Overall, the city experienced _clear_ and _stable atmospheric conditions_ throughout the year.
+
+### Cloud Cover Distribution
+
+```{r}
+# Create a histogram showing the distribution of low cloud cover (in octas)
+low_cloud_hist_plot <- ggplot(temp24, aes(x = lowClOct)) +
+  geom_histogram(bins = 10, fill = "#708090", color = "black") +  # Slate gray fill with black borders
+  labs(
+    title = "Distribution of Low Cloud Cover (Octas)",
+    x = "Low Cloud Cover (0–8)", y = "Frequency"
+  ) +
+  theme_minimal()  # Apply a clean, minimal theme
+
+# Convert the static histogram to an interactive Plotly version
+ggplotly(low_cloud_hist_plot)
+```
+
+The **histogram** shows that _low cloud cover_ in **Colchester** during **2024** was most frequently between **6 and 8 octas**, indicating _mostly cloudy_ to _overcast conditions_ on many days. _Clearer skies_ (low cloud cover below **4 octas**) were relatively rare. Overall, the city experienced _frequent cloudiness_ throughout the year.
+
+### Wind Speed vs Gust Correlation
+
+```{r}
+# Create a scatter plot to show the relationship between wind speed and wind gusts
+wind_speed_gust_plot <- ggplot(temp24, aes(x = WindkmhInt, y = WindkmhGust)) +
+  geom_point(alpha = 0.5, color = "#20B2AA") +  # Semi-transparent teal points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add linear trend line in red
+  labs(
+    title = "Correlation between Wind Speed and Wind Gust",
+    x = "Wind Speed (km/h)", y = "Wind Gust (km/h)"
+  ) +
+  theme_minimal()  # Apply a clean, minimal theme
+
+# Convert the scatter plot to an interactive Plotly version
+ggplotly(wind_speed_gust_plot)
+```
+
+The **scatter plot** shows a strong _positive correlation_ between **wind speed** and **wind gusts** in **Colchester** during **2024**. As wind speed increases, wind gusts also tend to rise, following a fairly _linear pattern_. This suggests that on _windier days_, stronger gusts are more likely, which is typical in _weather dynamics_.
+
+### Wind Direction Distribution
+
+```{r}
+# Prepare frequency data for wind directions
+wind_dir_freq <- temp24 %>%
+  count(WindkmhDir, name = "Count") %>%
+  rename(Direction = WindkmhDir)  # Rename for clarity
+
+# Define a custom color palette using the viridis scale
+custom_colors <- viridis(length(unique(wind_dir_freq$Direction)))
+
+# Create a polar bar chart (wind rose) using Plotly
+plot_ly(wind_dir_freq,
+        type = 'barpolar',                  # Use polar bar chart
+        r = ~Count,                         # Radius represents count of days
+        theta = ~Direction,                 # Angle represents wind direction
+        color = ~Direction,                 # Use direction to define color groups
+        colors = custom_colors) %>%
+  layout(
+    title = "Wind Direction Rose Chart (2024)",
+    polar = list(
+      angularaxis = list(
+        direction = "clockwise",            # Rotate clockwise
+        rotation = 90                       # Start from North
+      ),
+      radialaxis = list(
+        showticklabels = FALSE,             # Hide tick labels for cleaner look
+        ticks = ""                          # Remove tick marks
+      )
+    ),
+    showlegend = FALSE                      # Hide legend for simplicity
+  )
+```
+
+The **wind rose chart** shows that _westerly_ and _southwesterly winds_ were the most frequent in **Colchester** during **2024**, while _eastern_ and _northeastern winds_ were less common. This pattern reflects the _prevailing wind directions_ typical of the **UK’s maritime climate**, providing useful context for understanding _weather patterns_ and _environmental conditions_.
+
+## Exploring Weather’s Impact on Crime Rates
+
+### Merging crime24.csv & temp24.csv
+
+```{r}
+# Format dates for merging: extract "YYYY-MM" from each date
+crime24$merge_date <- format(crime24$date, "%Y-%m")
+temp24$merge_date <- format(temp24$Date, "%Y-%m")
+
+# Aggregate weather data by month: calculate mean values for each variable
+temp_monthly <- temp24 %>%
+  group_by(merge_date) %>%
+  summarise(
+    avg_temp = mean(TemperatureCAvg, na.rm = TRUE),
+    max_temp = mean(TemperatureCMax, na.rm = TRUE),
+    min_temp = mean(TemperatureCMin, na.rm = TRUE),
+    humidity = mean(HrAvg, na.rm = TRUE),
+    pressure = mean(PresslevHp, na.rm = TRUE),
+    precipitation = mean(Precmm, na.rm = TRUE)
+  )
+
+# Aggregate total number of crimes by month
+crime_monthly <- crime24 %>%
+  group_by(merge_date) %>%
+  summarise(
+    total_crimes = n()
+  )
+
+# Merge crime and weather datasets by month
+weather_crime <- left_join(crime_monthly, temp_monthly, by = "merge_date")
+
+# View the structure of the merged dataset
+as.data.frame(head(weather_crime))
+```
+
+
+
+### Correlation Between Crime and Weather Variables
+```{r}
+# Remove the merge_date column and compute a correlation matrix for numeric variables
+cor_matrix <- cor(weather_crime[, -1], use = "complete.obs")
+
+# Reshape the correlation matrix into long format for plotting
+cor_melted <- melt(cor_matrix)
+
+# Round correlation values to two decimal places for labels
+cor_melted$label <- round(cor_melted$value, 2)
+
+# Create an interactive correlation heatmap using Plotly
+crime_weather_corr_plot <- plot_ly(
+  data = cor_melted,
+  x = ~Var1,
+  y = ~Var2,
+  z = ~value,
+  type = "heatmap",
+  text = ~label,                      # Display correlation values as text
+  texttemplate = "%{text}",           # Format text appearance
+  textfont = list(color = "black", size = 12),
+  hoverinfo = "text",                 # Show only text on hover
+  colorscale = "YlGnBu",              # Apply Yellow-Green-Blue sequential color scale
+  zmin = -1, zmax = 1,                # Set color scale limits
+  colorbar = list(title = "Correlation")
+) %>%
+  layout(
+    title = "Correlation Between Crime & Weather Variables",
+    xaxis = list(title = "", tickangle = -45),
+    yaxis = list(title = "")
+  )
+
+
+# Render the interactive correlation heatmap
+crime_weather_corr_plot
+```
+
+The **correlation matrix** reveals that _crime in Colchester_ during **2024** is _moderately positively correlated_ with **temperature** and **precipitation**, suggesting higher crime rates during _warmer_ and _wetter conditions_. In contrast, **humidity** and **pressure** show _weak negative correlations_, indicating little to no influence on crime levels. Overall, **temperature** and **rainfall** appear to have the _strongest links_ to _crime trends_.
+
+
+### Scatter Plots: Weather vs Crime
+
+```{r}
+# Plot 1: Relationship between average temperature and total crimes
+p1 <- ggplot(weather_crime, aes(x = avg_temp, y = total_crimes)) +
+  geom_point(color = "#E67E22", size = 3) +  # Orange points
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Linear regression line
+  labs(
+    title = "Avg Temperature vs Crime",
+    x = "Average Temperature (°C)",
+    y = "Total Crimes"
+  ) +
+  theme_minimal()
+
+# Plot 2: Relationship between average humidity and total crimes
+p2 <- ggplot(weather_crime, aes(x = humidity, y = total_crimes)) +
+  geom_point(color = "#3498DB", size = 3) +  # Blue points
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Linear regression line
+  labs(
+    title = "Humidity vs Crime",
+    x = "Average Humidity (%)",
+    y = "Total Crimes"
+  ) +
+  theme_minimal()
+
+# Plot 3: Relationship between average pressure and total crimes
+p3 <- ggplot(weather_crime, aes(x = pressure, y = total_crimes)) +
+  geom_point(color = "#2ECC71", size = 3) +  # Green points
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Linear regression line
+  labs(
+    title = "Pressure vs Crime",
+    x = "Average Pressure (hPa)",
+    y = "Total Crimes"
+  ) +
+  theme_minimal()
+
+# Convert each ggplot object into interactive Plotly plots
+p1_plot <- ggplotly(p1)
+p2_plot <- ggplotly(p2)
+p3_plot <- ggplotly(p3)
+
+# Combine the three interactive plots into a single row layout
+subplot(p1_plot, p2_plot, p3_plot, nrows = 1, margin = 0.05, titleX = TRUE, titleY = TRUE) %>%
+  layout(
+    title = list(
+      text = "Weather Factors and Their Relationship with Crime",
+      x = 0.5,              # Center the main title
+      xanchor = "center",
+      y = 0.95
+    )
+  )
+```
+
+The **scatter plots** show that _crime in Colchester_ tends to rise with **higher temperatures**, suggesting a _positive link_ between **warmth** and _criminal activity_. In contrast, **humidity** and **pressure** show slight _negative correlations_ with crime, though these relationships are weaker. Overall, **temperature** appears to be the _strongest weather-related factor_ associated with monthly crime patterns in **2024**.
+
+
+### Crime on Wet vs Dry Months
+```{r}
+# Categorize each month as "Wet" or "Dry" based on average monthly precipitation
+weather_crime$rain_type <- ifelse(weather_crime$precipitation >= 1, "Wet", "Dry")
+
+# Create a boxplot comparing total crime counts between wet and dry months
+wet_dry_crime_boxplot <- ggplot(weather_crime, aes(x = rain_type, y = total_crimes, fill = rain_type)) +
+  geom_boxplot() +  # Display distribution, median, and range of crimes per group
+  scale_fill_manual(values = c("Wet" = "#1F78B4", "Dry" = "#FFD700")) +  # Blue for wet, gold for dry
+  labs(
+    title = "Crime Comparison: Wet vs Dry Months",
+    x = "Month Type", y = "Total Crimes"
+  ) +
+  theme_minimal()  # Apply a clean minimal theme
+
+# Convert the static boxplot into an interactive Plotly version
+ggplotly(wet_dry_crime_boxplot)
+```
+
+The **boxplot** compares _crime levels_ between **wet** and **dry months** in **Colchester** for **2024**. It shows that _wet months_ tend to have slightly _higher crime counts_ on average and a _wider range of variation_. This pattern suggests a _modest association_ between **rainfall** and _increased crime_, possibly due to more _social activity_ or _weather-related disruptions_ during wetter periods.
+
+
+### Average Temperature Range vs Crime Types
+```{r}
+# Join crime and weather datasets by merge_date (month), allowing multiple matches
+combined <- left_join(crime24, temp24, by = "merge_date", relationship = "many-to-many")
+
+# Categorize temperature into three ranges using quantiles: Low, Medium, High
+combined$temp_range <- cut(
+  combined$TemperatureCAvg,
+  breaks = quantile(combined$TemperatureCAvg, probs = c(0, 0.33, 0.66, 1), na.rm = TRUE),
+  labels = c("Low", "Medium", "High"),
+  include.lowest = TRUE
+)
+
+# Create a proportional bar plot showing crime category distribution by temperature range
+crime_by_temp_range_plot <- ggplot(combined, aes(x = temp_range, fill = category)) +
+  geom_bar(position = "fill") +  # Fill bars proportionally by category
+  labs(
+    title = "Crime Type Distribution by Temperature Range",
+    x = "Temperature Range", y = "Proportion",
+    fill = "Crime Category"
+  ) +
+  scale_fill_viridis_d(option = "magma") +  # Apply a perceptually uniform color palette
+  theme_minimal()  # Use a clean visual theme
+
+# Convert the static plot to an interactive Plotly version
+ggplotly(crime_by_temp_range_plot)
+```
+
+The **chart** shows that while most _crime types_ occur consistently across _temperature ranges_, **anti-social behaviour** and **public order offences** are slightly more common in _warmer conditions_. In contrast, crimes like **vehicle crime** and **shoplifting** remain steady regardless of temperature. This suggests that some _crime types_ may be more influenced by **temperature** than others.
+
+### Humidity Range vs Crime Types 
+```{r}
+# Categorize humidity into two bins: Low and High based on median split
+combined$humidity_range <- cut(
+  combined$HrAvg,
+  breaks = quantile(combined$HrAvg, probs = c(0, 0.5, 1), na.rm = TRUE),
+  labels = c("Low", "High"),
+  include.lowest = TRUE
+)
+
+# Create a violin plot to visualize humidity distribution across crime categories
+humidity_crime_violin_plot <- ggplot(combined, aes(x = category, y = HrAvg, fill = humidity_range)) +
+  geom_violin(scale = "width", trim = FALSE, color = "black") +  # Violin plot with uniform width
+  labs(
+    title = "Distribution of Humidity by Crime Category",
+    x = "Crime Category", y = "Humidity (%)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# Convert the violin plot to an interactive Plotly chart
+ggplotly(humidity_crime_violin_plot)
+```
+
+The **violin plot** shows that most _crime types_ occur under both _low_ and _high humidity_, but slightly more crimes—especially _violent_ and _public order offences_—are associated with **higher humidity levels**. This suggests a _minor trend_ of increased crime during more _humid conditions_.
+
+## Visual Analytics-Driven Approaches to Advanced Clustering Techniques
+
+### Interactive Leaflet Map with Clustering
+```{r}
+# Filter out rows with missing latitude or longitude to ensure valid map points
+crime_map_data <- crime24 %>% filter(!is.na(lat), !is.na(long))
+
+# Create an interactive leaflet map with marker clustering for crime incidents
+leaflet(crime_map_data) %>%
+  addTiles() %>%  # Add default OpenStreetMap tile layer
+  addMarkers(
+    lng = ~long, lat = ~lat,  # Use coordinates from dataset
+    clusterOptions = markerClusterOptions(),  # Enable clustering of nearby markers
+    popup = ~paste("Crime:", category, "<br>", "Street:", street_name)  # Display info on click
+  ) %>%
+  setView(
+    lng = mean(crime_map_data$long, na.rm = TRUE),  # Center the map on the average longitude
+    lat = mean(crime_map_data$lat, na.rm = TRUE),   # Center the map on the average latitude
+    zoom = 13  # Set zoom level for detailed town view
+  )
+```
+
+The **interactive leaflet map with clustering** provides a _spatial overview_ of **crime hotspots** across **Colchester** in **2024**. Each numbered circle represents a _cluster_ of reported crimes in a specific geographic area, with the number indicating the _total incidents_ in that location. _Larger circles_ and _warmer colors_ (orange/red) reflect areas with _higher concentrations of crime_.
+
+From the map, it’s clear that the **town center**—particularly the vicinity around **Colchester Town Station** and **Southway**—emerges as a primary hotspot, with cluster counts exceeding **1,100 crimes** in some zones. Other significant concentrations appear along **Butt Road**, **Hythe Hill**, and near **St Nicholas Street**, suggesting these may be _high-traffic_ or _densely populated areas_. In contrast, peripheral areas such as _Cymbeline Meadows_ or _Abbey Field_ show much lower crime frequencies, with some clusters having fewer than **10 incidents**.
+
+In summary, this _clustered map_ helps visualize how crime is _spatially distributed_, highlighting _urban centers_ as key hotspots. It enables authorities and policymakers to _target specific areas_ for surveillance, prevention, or community engagement efforts.
+
+### K-Means Clustering of Crime Hotspots
+```{r}
+# Prepare data for K-means clustering
+crime_k <- crime_map_data %>%
+  select(lat, long) %>%
+  na.omit()
+
+# Run K-means clustering (4 clusters here, adjust as needed)
+set.seed(123)
+crime_kmeans <- kmeans(crime_k, centers = 4)
+
+# Add cluster assignments to your spatial data
+crime_map_data$cluster <- factor(crime_kmeans$cluster)
+# Define a color palette for clusters
+cluster_palette <- colorFactor(
+  palette = c("red", "blue", "green", "purple"),
+  domain = crime_map_data$cluster
+)
+
+# Create a Leaflet map showing crime clusters from K-means results
+leaflet(crime_map_data) %>%
+  addTiles() %>%  # Add default OpenStreetMap tiles
+  addCircleMarkers(
+    lng = ~long,
+    lat = ~lat,
+    color = ~cluster_palette(cluster),  # Color markers by cluster
+    radius = 5,
+    stroke = FALSE,
+    fillOpacity = 0.6,
+    popup = ~paste("Cluster:", cluster, "<br>Crime:", category, "<br>Street:", street_name)
+  ) %>%
+  setView(
+    lng = mean(crime_map_data$long, na.rm = TRUE),
+    lat = mean(crime_map_data$lat, na.rm = TRUE),
+    zoom = 14
+  ) %>%
+  addLegend("bottomright",
+            pal = cluster_palette,
+            values = ~cluster,
+            title = "Crime Clusters",
+            opacity = 0.8)
+```
+
+
+The **K-Means clustering plot** illustrates how _crime locations_ in **Colchester** are _spatially grouped_ based on geographic coordinates. Using four cluster centers, the algorithm identifies areas where incidents are _densely concentrated_, assigning each to a specific _color-coded cluster_.
+
+From the visualization, we can distinguish four prominent _spatial clusters_. **Cluster 1** (_red_) is concentrated in the _southwestern zone_, **Cluster 2** (_blue_) covers the _eastern region_, **Cluster 3** (_green_) appears in the _southern-central part_, and **Cluster 4** (_purple_) is focused in the _northern stretch_ of the town center. This clear geographic separation suggests that _different neighborhoods_ in **Colchester** are subject to _distinct crime patterns_.
+
+These insights are valuable for _law enforcement_ and _urban planners_. Cluster-specific trends could indicate hotspots for _nightlife_, _commercial activity_, or _residential vulnerability_. As a result, interventions—such as increased patrols, surveillance, or community outreach—can be _strategically localized_, allowing for more _effective and efficient crime prevention efforts_ across the town.
+
+
+### Interactive Time Slider for Monthly Crime
+```{r}
+# Group crime data by month and category, and count the number of incidents
+crime_time <- crime24 %>%
+  group_by(month_year = format(date, "%Y-%m"), category) %>%
+  summarise(count = n(), .groups = 'drop')
+
+# Create an interactive multi-line chart showing monthly crime trends per category
+plot_ly(
+  data = crime_time,
+  x = ~month_year,                 # X-axis: month and year
+  y = ~count,                      # Y-axis: number of crimes
+  color = ~category,               # Color lines by crime category
+  colors = viridis_pal(option = "D")(length(unique(crime_time$category))),  # Apply perceptually uniform palette
+  type = 'scatter', mode = 'lines+markers'  # Line plot with markers
+) %>%
+  layout(
+    title = "Interactive Monthly Crime by Category",
+    xaxis = list(title = "Month"),
+    yaxis = list(title = "Crime Count")
+  )
+```
+
+The **interactive chart** shows _monthly crime trends by category_ in **2024**. **Violent crime** is the most frequent throughout the year, followed by _anti-social behaviour_ and _shoplifting_. Some categories remain _low and stable_, such as _bicycle theft_ and _possession of weapons_. Overall, the chart highlights _seasonal fluctuations_ and helps identify which _crime types dominate each month_.
+
+
+### Animated Time Series with gganimate
+```{r}
+# Prepare monthly crime data by summarising the number of incidents per category each month
+crime_anim_data <- crime24 %>%
+  mutate(month = format(date, "%Y-%m")) %>%
+  group_by(month, category) %>%
+  summarise(crime_count = n(), .groups = 'drop')
+
+# Create a base ggplot object for animation
+crime_anim_plot <- ggplot(crime_anim_data, aes(x = reorder(category, -crime_count), y = crime_count, fill = category)) +
+  geom_col(show.legend = FALSE) +  # Use column chart without legend
+  labs(
+    title = 'Monthly Crime by Category: {closest_state}',  # Dynamic title showing current month
+    x = 'Crime Category',
+    y = 'Number of Crimes'
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Tilt x-axis labels for clarity
+  transition_states(month, transition_length = 2, state_length = 1) +  # Animate across months
+  ease_aes('cubic-in-out')  # Smooth easing for transitions
+
+# Render the animation as a GIF (requires gifski package)
+animate(crime_anim_plot, nframes = 100, fps = 10, renderer = gifski_renderer())
+
+```
+
+The **animated bar chart** visualizes how _crime categories_ changed _month-by-month_ throughout **2024**. It clearly shows **violent crime** consistently dominating across all months, followed by _anti-social behaviour_ and _shoplifting_. While the order of less frequent crimes shifts slightly, overall trends remain _stable_.
+
+This animation provides a _dynamic view_ of _seasonal or monthly fluctuations_ in crime types, making it easier to spot _peaks_ and _patterns over time_. It’s especially useful for identifying _months with spikes_ in certain offences and tracking how _priorities may shift_ throughout the year.
+
+### Animated Crime Hotspot Map (Over Time)
+```{r}
+# Prepare spatial crime data with valid coordinates and a monthly timestamp
+crime_map_anim <- crime24 %>%
+  filter(!is.na(lat) & !is.na(long)) %>%
+  mutate(month = format(date, "%Y-%m"))
+
+# Identify the top 5 most frequent crime categories
+top_categories <- crime_map_anim %>%
+  count(category, sort = TRUE) %>%
+  top_n(5) %>%
+  pull(category)
+
+# Filter the dataset to include only the top 5 crime categories
+crime_map_anim <- crime_map_anim %>%
+  filter(category %in% top_categories)
+
+# Define custom color palette for selected crime categories
+custom_colors <- c("red", "pink", "blue", "green", "black")
+
+# Load UK map boundaries for base layer
+uk_map <- map_data("world", region = "UK")
+
+# Create an animated plot showing monthly changes in crime hotspots
+map_anim_plot <- ggplot() +
+  geom_polygon(data = uk_map, aes(x = long, y = lat, group = group),
+               fill = "white", color = "gray80") +  # Base map with light outline
+  geom_point(data = crime_map_anim, aes(x = long, y = lat, color = category),
+             alpha = 0.7, size = 2) +  # Plot crime points with transparency
+  scale_color_manual(values = custom_colors) +  # Apply custom colors
+  coord_fixed(xlim = range(crime24$long), ylim = range(crime24$lat)) +  # Lock map aspect ratio to data range
+  labs(
+    title = "Monthly Crime Hotspots in Colchester: {closest_state}",
+    subtitle = "Top 5 Crime Categories",
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  transition_states(month, transition_length = 2, state_length = 1) +  # Animate by month
+  ease_aes("linear")  # Smooth linear transition
+
+# Render the animation as a GIF
+animate(map_anim_plot, nframes = 100, fps = 10, renderer = gifski_renderer())
+```
+
+The **animated hotspot map** showcases how the _top five crime categories_ are _spatially distributed_ across **Colchester** each month in **2024**. Each colored point represents an incident from a leading category such as **violent crime**, _anti-social behaviour_, or _shoplifting_.
+
+From this visualization, we observe that _hotspots are consistently concentrated_ around _central Colchester_, with activity fluctuating across months. **Violent crimes** (_black_) appear frequently and are _widely dispersed_, while **shoplifting** (_green_) and _public order offences_ (_blue_) are more centralized. The _dynamic movement and density_ of these hotspots reveal _temporal patterns_ that can aid law enforcement in _allocating resources_ and _planning patrols more effectively_.
+
+
+### Animated Temperature Over Time
+```{r}
+# Select relevant columns for animation (daily average temperature)
+temp_anim <- temp24 %>%
+  select(Date, TemperatureCAvg)
+
+# Create a line plot of daily average temperature
+temp_plot <- ggplot(temp_anim, aes(x = Date, y = TemperatureCAvg)) +
+  geom_line(color = "purple", size = 0.7) +  # Plot in purple with moderate line thickness
+  labs(
+    title = "Daily Average Temperature in Colchester (2024)",
+    x = "Date", y = "Temperature (°C)"
+  ) +
+  theme_bw() +  # Use classic black-and-white theme
+  transition_reveal(Date)  # Animate reveal over time using the Date variable
+
+# Render the animated plot as a GIF
+animate(temp_plot, nframes = 100, fps = 10, renderer = gifski_renderer())
+```
+
+The **animated line plot** displays the _daily average temperature_ in **Colchester** throughout **2024**. It clearly reflects the expected _seasonal pattern_—temperatures rise steadily from _winter to summer_, peaking around **July** and **August**, before declining again toward the end of the year.
+
+This smooth fluctuation highlights **Colchester’s temperate climate**, with noticeable _warmth in mid-year_ and _cooler conditions_ during the early and late months. The animation makes it easy to observe _short-term spikes or drops_ in temperature, possibly linked to brief _weather events_.
+
+
+
+## **Summary and Recommendations**
+
+### **Summary of Findings**
+
+This project examined whether _weather conditions_—specifically **temperature**, **humidity**, **precipitation**, and **pressure**—influenced _crime patterns_ in **Colchester** during **2024**. Exploratory analysis of both _crime_ and _climate data_ revealed several notable associations.
+
+_Seasonal trends_ showed that crime peaked during **warmer months**, particularly _summer_ and _early autumn_, with offences like _anti-social behaviour_ and _public disorder_ more common during these periods. This suggests that **warmer weather** may indirectly contribute to higher crime through increased _outdoor activity_ and _social interaction_. Conversely, _colder and wetter months_ saw slightly reduced crime, consistent with the idea that _poor weather_ discourages public presence and _opportunistic behaviour_.
+
+Among weather variables, **temperature** had the _strongest association_ with total crime, while _humidity_ and _pressure_ showed weaker, more _category-specific links_. **Rainfall** had minimal effect on overall crime, though certain offences showed _mild sensitivity_ to precipitation.
+
+_Spatial analysis_ identified persistent **hotspots** around _central Colchester_, especially near _nightlife_ and _commercial areas_. **Clustering analysis** revealed _distinct crime zones_, offering useful insights for _targeted resource deployment_. _Animated and interactive visualisations_ further highlighted _temporal_ and _spatial shifts_ in crime.
+
+### **Recommendations**
+
+Based on these findings, several recommendations are proposed. **Policing efforts** could be _adjusted seasonally_, with increased patrols during _warmer months_ and around _hotspot areas_. Integrating **weather data** into _early-warning systems_ may also support **proactive crime prevention**. Additionally, **spatial clustering** results could inform _strategic CCTV placement_ and _community engagement_ initiatives.
+
+### **Future Work**
+
+Future research could build on this project by incorporating additional _environmental factors_ such as **wind speed**, **cloud cover**, and **visibility**, or by examining _crime patterns_ by _time of day_. Applying _predictive modelling techniques_—such as **logistic regression** or **machine learning**—may improve _forecasting of high-risk periods_ based on weather trends. _Comparative studies_ across other towns or cities could also reveal whether similar _weather-crime relationships_ hold in different urban contexts.
+
+### **Conclusion**
+
+This study demonstrates that _weather conditions_ have a _measurable_, though **modest**, impact on _crime patterns_ in **Colchester**. Integrating _environmental insights_ into crime analysis can support more _informed_, _responsive policing_ and long-term **public safety planning**.
+
+
+
+## References
+
+- Office for National Statistics (2023). *Crime in England and Wales: year ending December 2022*. Retrieved from https://www.ons.gov.uk
+
+- Essex Police (2024). *Colchester Crime Statistics 2024*. Available via UK Police Data Portal: https://data.police.uk/
+
+- NJ Tierney (2024). *ukp.crime – Street-level crime data documentation*. Retrieved from https://ukpolice.njtierney.com/reference/ukp_crime.html
+
+- B. Czernecki (2024). *meteo_ogimet – Climate data from global weather stations*. Retrieved from https://bczernecki.github.io/climate/reference/meteo_ogimet.html
+
+- Field, A., Miles, J., & Field, Z. (2012). *Discovering Statistics Using R*. SAGE Publications.
+
+- Hipp, J.R., & Kim, Y.A. (2017). “Weather and crime: How weather patterns influence violent and property crimes.” *Environment and Behavior*, 49(2), 143–172.
+
+- Mohler, G.O., Short, M.B., Brantingham, P.J., Schoenberg, F.P., & Tita, G.E. (2011). “Self-exciting point process modeling of crime.” *Journal of the American Statistical Association*, 106(493), 100–108.
+
+- Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis*. Springer-Verlag New York.
+
+- R Core Team (2024). *R: A Language and Environment for Statistical Computing*. R Foundation for Statistical Computing. https://www.R-project.org/
+
+-------------------------------------------------------------------------------------------------------------
